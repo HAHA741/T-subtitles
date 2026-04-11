@@ -1,0 +1,12 @@
+services:
+  universal-sub-api:
+    build: .
+    container_name: universal-sub-api
+    ports:
+      - "8822:8822"
+    environment:
+      - DEBUG=0                  # 改为 1 开启详细日志
+      - COOKIES_FROM_BROWSER=    # 容器内无浏览器，留空；本地用 -e COOKIES_FROM_BROWSER=firefox
+    volumes:
+      - ./cookies.txt:/app/cookies.txt  # 导出浏览器 cookies.txt 放项目目录即可生效
+    restart: always
