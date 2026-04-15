@@ -10,3 +10,28 @@ services:
     volumes:
       - ./cookies.txt:/app/cookies.txt  # 导出浏览器 cookies.txt 放项目目录即可生效
     restart: always
+
+  scheduler:
+    build: ./scheduler
+    container_name: yt-scheduler
+    environment:
+      # PostgreSQL 连接串：容器内访问宿主机用 host.docker.internal
+      - DATABASE_URL=postgresql://superuser:123456@host.docker.internal:5432/postgres
+      # 字幕 API 地址（同 compose 网络内直接用服务名）
+      - SUBTITLE_API_URL=http://universal-sub-api:8822
+      # Cron 表达式（5 段标准格式）：默认每小时整点执行
+      - CRON_EXPR=0 * * * *
+      # 设为 1 时容器启动后立即执行一次，便于调试
+      - RUN_NOW=0
+      # 每次处理的最大视频条数
+      - BATCH_SIZE=5
+      # OpenAI / 兼容接口配置（留空则跳过 AI 处理）
+      - OPENAI_API_KEY=
+      - OPENAI_BASE_URL=https://yunwu.ai/v1
+      - OPENAI_MODEL=gpt-4o
+    # Linux 宿主机需要此配置才能访问 host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - universal-sub-api
+    restart: unless-stopped

@@ -11,7 +11,8 @@ import glob
 COOKIE_FILE = "/app/cookies.txt"
 # 从浏览器读取 cookies，本地调试用，例如 "firefox" 或 "chrome"
 # 通过环境变量 COOKIES_FROM_BROWSER 配置，Docker 部署时留空
-COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER", "")
+COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER", "firefox")
+print(f"[config] COOKIE_FILE={COOKIE_FILE} COOKIES_FROM_BROWSER={COOKIES_FROM_BROWSER}")
 # ai-zh: B站AI字幕; zh-Hans/zh.*: 其他中文; en.*: 英文兜底
 DEFAULT_LANGS = "ai-zh,zh-Hans,zh.*,en.*"
 PORT = 8822
@@ -95,9 +96,12 @@ def get_subtitle_info(url: str) -> dict:
         print(f"[info] extracting: {url}")
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            import json
+            # print(json.dumps(info, indent=2, default=str, ensure_ascii=False))
             subs = info.get('subtitles', {})
             auto_subs = info.get('automatic_captions', {})
             print(f"[info] subtitles={list(subs.keys())} auto={list(auto_subs.keys())}")
+            print(json.dumps(auto_subs, indent=2, default=str, ensure_ascii=False))
             return {
                 'id': info.get('id'),
                 'title': info.get('title'),
