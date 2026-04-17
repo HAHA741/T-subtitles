@@ -14,7 +14,7 @@ COOKIE_FILE = "/app/cookies.txt"
 COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER", "firefox")
 print(f"[config] COOKIE_FILE={COOKIE_FILE} COOKIES_FROM_BROWSER={COOKIES_FROM_BROWSER}")
 # ai-zh: B站AI字幕; zh-Hans/zh.*: 其他中文; en.*: 英文兜底
-DEFAULT_LANGS = "ai-zh,zh-Hans,zh.*,en.*"
+DEFAULT_LANGS = "ai-zh,zh-Hans,zh.*,en.*,ai-en"
 PORT = 8822
 
 app = FastAPI(title="Universal Subtitle API")
@@ -61,12 +61,30 @@ def clean_srt(srt_text: str) -> str:
 DEBUG = os.environ.get("DEBUG", "0") == "1"
 
 
+class YDLLogger:
+    """将 yt-dlp 内部日志透传到 stdout，方便诊断 cookie/字幕问题。"""
+    PREFIX = "[ydl]"
+
+    def debug(self, msg: str):
+        # 只打印关键诊断信息，避免刷屏
+        lower = msg.lower()
+        if any(k in lower for k in ("cookie", "subtitle", "caption", "extract", "download")):
+            print(f"{self.PREFIX} {msg}")
+
+    def warning(self, msg: str):
+        print(f"{self.PREFIX} WARNING: {msg}")
+
+    def error(self, msg: str):
+        print(f"{self.PREFIX} ERROR: {msg}")
+
+
 def _base_ydl_opts(temp_dir: str) -> dict:
     opts = {
         'outtmpl': f'{temp_dir}/%(id)s.%(ext)s',
         'quiet': not DEBUG,
         'no_warnings': not DEBUG,
         'verbose': DEBUG,
+        'logger': YDLLogger(),
     }
     # 优先使用 cookies 文件（Docker 生产环境）
     if os.path.exists(COOKIE_FILE):
@@ -97,11 +115,17 @@ def get_subtitle_info(url: str) -> dict:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             import json
-            # print(json.dumps(info, indent=2, default=str, ensure_ascii=False))
             subs = info.get('subtitles', {})
             auto_subs = info.get('automatic_captions', {})
-            print(f"[info] subtitles={list(subs.keys())} auto={list(auto_subs.keys())}")
-            print(json.dumps(auto_subs, indent=2, default=str, ensure_ascii=False))
+            print(f"[info] subtitles({len(subs)})={list(subs.keys())}")
+            print(f"[info] automatic_captions({len(auto_subs)})={list(auto_subs.keys())}")
+            # 打印每个字幕轨道的可用格式，方便对比 cmd 输出
+            for lang, fmts in subs.items():
+                fmt_names = [f.get('ext') for f in fmts] if isinstance(fmts, list) else fmts
+                print(f"[info]   sub  {lang}: {fmt_names}")
+            for lang, fmts in auto_subs.items():
+                fmt_names = [f.get('ext') for f in fmts] if isinstance(fmts, list) else fmts
+                print(f"[info]   auto {lang}: {fmt_names}")
             return {
                 'id': info.get('id'),
                 'title': info.get('title'),
