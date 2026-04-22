@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import logging
 import time
+import re
 from pathlib import Path
 
 import base64
@@ -76,7 +77,7 @@ class TitleOutput(BaseModel):
 
 class IllustrationItem(BaseModel):
     index: int = Field(description="图片序号，从1开始")
-    position: str = Field(description="插入位置描述，如「第一段之后」或「封面」")
+    position: str = Field(description="插入位置前面的文字，如「文字内容」或「封面」")
     visual_concept: str = Field(description="视觉意象，中文描述")
     prompt_en: str = Field(description="英文图片生成提示词")
     aspect_ratio: str = Field(description="画幅比例，如 2.35:1 或 16:9")
@@ -130,8 +131,8 @@ def _generate_img(client: OpenAI, prompt: str, save_path: Path | None = None) ->
     response = client.images.generate(
         model=IMAGE_OPENAI_MODEL,
         prompt=prompt,
-        size="1024x1024",
-        # quality="high",
+        size="256x256",
+        quality="standard"
         # response_format="url",
         # output_format="jpeg",
         # output_compression=80,
@@ -160,10 +161,11 @@ def _generate_all_images(illus_output: IllustrationOutput, vid_id: int) -> Illus
     img_client = _get_ai_client()
     img_dir = (Path(OUTPUT_DIR) / "images") if OUTPUT_DIR else None
     for item in illus_output.illustrations:
-        try:
+        try: 
+            prompt = f"color_scheme:{illus_output.color_scheme},style:{illus_output.style},{item.prompt_en}"
             time.sleep(AI_CALL_INTERVAL)
             save_path = (img_dir / f"{vid_id}_{item.index}.png") if img_dir else None
-            result = _generate_img(img_client, item.prompt_en, save_path=save_path)
+            result = _generate_img(img_client, prompt, save_path=save_path)
             # b64_json 路径转为相对路径，url 直接使用
             if save_path and result == str(save_path):
                 item.url = f"images/{vid_id}_{item.index}.png"
@@ -175,13 +177,53 @@ def _generate_all_images(illus_output: IllustrationOutput, vid_id: int) -> Illus
     return illus_output
 
 
+def _normalize_for_match(text: str) -> str:
+    """将文本规整为可匹配形态，尽量忽略空白与常见标点差异。"""
+    if not text:
+        return ""
+    compact = re.sub(r"\s+", "", text)
+    return re.sub(r"[，。！？、,.!?;；:：'\"“”‘’「」『』（）()【】\[\]…-]", "", compact)
+
+
+def _extract_position_anchor(position: str) -> str:
+    """从 position 提取“插图之前的正文锚点文本”。"""
+    if not position:
+        return ""
+
+    # 优先提取引号中的原文锚点
+    quoted = re.findall(r"[“\"「](.+?)[”\"」]", position)
+    if quoted:
+        return quoted[-1].strip()
+
+    # 常见格式："第X段之后（...）" / "xxx之后"
+    cleaned = re.sub(r"第\s*\d+\s*段之后", "", position)
+    cleaned = re.sub(r"[（(].*?[）)]", "", cleaned)
+    cleaned = re.sub(r"(之前|之后|后)\s*$", "", cleaned)
+    return cleaned.strip()
+
+
+def _find_insert_index_by_anchor(paragraphs: list[str], anchor: str) -> int | None:
+    """返回应在第几个段落后插图；找不到返回 None。"""
+    if not anchor:
+        return None
+
+    anchor_norm = _normalize_for_match(anchor)
+    if not anchor_norm:
+        return None
+
+    for i, para in enumerate(paragraphs):
+        if anchor_norm in _normalize_for_match(para):
+            return i
+    return None
+
+
 def _build_markdown(article: str, illus_output: IllustrationOutput | None) -> str:
     """将文章正文与已生成 URL 的配图合并为 Markdown 文档。
 
     策略：
     - position 含「封面」的图片放在文章最顶部（作为 header image）
-    - 其余有效图片（有 URL）按段落均匀分布插入正文
-    - 均匀插入：将正文段落等分为 (n+1) 份，在每个分割点后插图
+    - 其余有效图片（有 URL）优先按 position 返回的锚点文本插入
+    - 锚点无法匹配时，再回退到段落均匀分布插入
     """
     if not illus_output:
         return article
@@ -203,26 +245,38 @@ def _build_markdown(article: str, illus_output: IllustrationOutput | None) -> st
 
     # 将正文按段落分割（空行分段）
     paragraphs = [p for p in article.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return "".join(header_parts) + article
 
-    # 均匀插入：在 len(paragraphs) 中均匀选 len(body_items) 个插入点
-    if body_items:
+    # 先尝试按锚点定位，再对未命中的图片做均匀回退。
+    insert_after: dict[int, list[IllustrationItem]] = {}
+    unresolved: list[IllustrationItem] = []
+    for item in body_items:
+        anchor = _extract_position_anchor(item.position)
+        idx = _find_insert_index_by_anchor(paragraphs, anchor)
+        if idx is None:
+            unresolved.append(item)
+            continue
+        insert_after.setdefault(idx, []).append(item)
+
+    # 均匀回退：在未命中的图片上执行，避免依赖锚点完全准确。
+    if unresolved:
         n = len(paragraphs)
-        m = len(body_items)
-        # 插入点为 n/(m+1), 2n/(m+1), ... 取整后的段落索引
-        insert_after: dict[int, IllustrationItem] = {}
-        for k, item in enumerate(body_items, start=1):
+        m = len(unresolved)
+        for k, item in enumerate(unresolved, start=1):
             idx = min(round(n * k / (m + 1)), n - 1)
-            # 避免同一段落插多张图
             while idx in insert_after and idx < n - 1:
                 idx += 1
-            insert_after[idx] = item
+            insert_after.setdefault(idx, []).append(item)
+
+    if body_items:
 
         result_parts: list[str] = []
         for i, para in enumerate(paragraphs):
             result_parts.append(para)
             if i in insert_after:
-                item = insert_after[i]
-                result_parts.append(f"\n![{item.visual_concept}]({item.url})\n")
+                for item in sorted(insert_after[i], key=lambda x: x.index):
+                    result_parts.append(f"\n![{item.visual_concept}]({item.url})\n")
         body_md = "\n\n".join(result_parts)
     else:
         body_md = "\n\n".join(paragraphs)
