@@ -36,7 +36,7 @@ def fetch_pending_videos(limit: int = 5) -> list[RealDictRow]:
                        ai_result, ai_status, meta_data, created_at
                 FROM video_data
                 WHERE ai_status = '0'
-                ORDER BY created_at ASC
+                ORDER BY hotness_score DESC NULLS LAST
                 LIMIT %s
                 """,
                 (limit,),

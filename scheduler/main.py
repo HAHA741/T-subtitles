@@ -23,6 +23,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from jobs import process_videos
+from get_data_jobs import run_fetch_job
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 CRON_EXPR: str = os.environ.get("CRON_EXPR", "0 * * * *")
+# 抓取任务专用 cron，默认每小时执行一次
+FETCH_CRON_EXPR: str = os.environ.get("FETCH_CRON_EXPR", "0 * * * *")
 RUN_NOW: bool = os.environ.get("RUN_NOW", "0") == "1"
 
 
@@ -44,12 +47,18 @@ def _parse_cron(expr: str) -> dict:
 
 def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
     cron_kwargs = _parse_cron(CRON_EXPR)
     scheduler.add_job(process_videos, "cron", id="process_videos", **cron_kwargs)
-    logger.info("调度器启动，cron: %s  解析: %s", CRON_EXPR, cron_kwargs)
+    logger.info("AI 改写任务已注册，cron: %s  解析: %s", CRON_EXPR, cron_kwargs)
+
+    fetch_cron_kwargs = _parse_cron(FETCH_CRON_EXPR)
+    scheduler.add_job(run_fetch_job, "cron", id="run_fetch_job", **fetch_cron_kwargs)
+    logger.info("数据抓取任务已注册，cron: %s  解析: %s", FETCH_CRON_EXPR, fetch_cron_kwargs)
 
     if RUN_NOW:
-        logger.info("RUN_NOW=1，立即执行一次任务后退出")
+        logger.info("RUN_NOW=1，立即执行一次后退出")
+        run_fetch_job()
         process_videos()
         return
 

@@ -357,20 +357,26 @@ def _process_one(video: dict) -> None:
             except Exception as exc:
                 logger.warning("[job] id=%d 图片生成阶段异常（不阻断主流程）: %s", vid_id, exc)
 
-        # 8. 写回数据库
+   
+
+        # 8. 合并图文，保存到本地文件
+        final_md = _build_markdown(ai_article, illus_output)
+
+
+        # 9. 写回数据库
         update_video(
             vid_id,
             "done",
-            ai_result=article,
+            ai_result=final_md,
             ai_article=ai_article,
             ai_check=ai_check,
             ai_compressed=compressed,
+            ai_title=title_output.top3[0] if title_output and title_output.top3 else None,
         )
-
-        # 9. 合并图文，保存到本地文件
-        final_md = _build_markdown(ai_article, illus_output)
         _save_to_file(vid_id, video.get("title", ""), compressed, ai_article, ai_check, title_output, illus_output, final_md)
         logger.info("[job] id=%d 处理完成", vid_id)
+
+    
 
     except Exception as exc:
         logger.exception("[job] id=%d 处理失败: %s", vid_id, exc)

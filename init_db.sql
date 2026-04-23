@@ -35,12 +35,14 @@ CREATE TABLE IF NOT EXISTS video_data (
     play_count    BIGINT,
     share_count   BIGINT,
     comment_count BIGINT,
+    favorite_count BIGINT,
     ai_status     VARCHAR(20) NOT NULL DEFAULT 'pending',
     -- ai_status 取值: pending / processing / done / failed
     ai_result     TEXT,                           -- AI 完整输出（备份）
     ai_article    TEXT,                           -- 文章正文（尾部分割符之前）
     ai_check      TEXT,                           -- 文章检查段（尾部分割符及其后内容）
     ai_compressed TEXT,                           -- AI 压缩后的字幕素材
+    ai_title       TEXT,                           -- AI 生成的标题
     meta_data     JSONB,
     createf_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -53,3 +55,16 @@ CREATE INDEX IF NOT EXISTS idx_video_data_createf_at ON video_data (createf_at);
 ALTER TABLE video_data ADD COLUMN IF NOT EXISTS ai_article    TEXT;
 ALTER TABLE video_data ADD COLUMN IF NOT EXISTS ai_check      TEXT;
 ALTER TABLE video_data ADD COLUMN IF NOT EXISTS ai_compressed TEXT;
+ALTER TABLE video_data ADD COLUMN IF NOT EXISTS ai_title      TEXT;
+ALTER TABLE video_data ADD COLUMN IF NOT EXISTS favorite_count     BIGINT;
+ALTER TABLE video_data
+ADD COLUMN hotness_score NUMERIC(10, 2)
+GENERATED ALWAYS AS (
+    -- 权重：分享*5 + 收藏*4 + 评论*3
+    -- 分母：播放量 + 1000 (平滑值，防止小播放量数值过大)
+    (
+        (share_count * 5 + favorite_count * 4 + comment_count * 3)::NUMERIC 
+        / (play_count + 1000) -- 这里 1000 是偏置值，可根据你的平均播放量调整
+        * 100
+    )
+) STORED;
